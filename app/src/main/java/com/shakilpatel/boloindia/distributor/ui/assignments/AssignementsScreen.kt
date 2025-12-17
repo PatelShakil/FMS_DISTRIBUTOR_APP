@@ -4,9 +4,12 @@ import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -15,9 +18,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.shakilpatel.boloindia.distributor.data.models.QRAssignment
 import com.shakilpatel.boloindia.distributor.utils.toRelativeTime
+import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.*
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AssignmentsScreen(
@@ -33,8 +36,9 @@ fun AssignmentsScreen(
     val error by viewModel.error.collectAsState()
     val showRejectDialog by viewModel.showRejectDialog.collectAsState()
 
-    var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("Pending", "Accepted", "Deployed")
+    val pagerState = rememberPagerState(pageCount = { tabs.size })
+    val coroutineScope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -58,8 +62,15 @@ fun AssignmentsScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Tabs with counts
-            TabRow(selectedTabIndex = selectedTab) {
+            // Tabs with counts - synchronized with pager
+            TabRow(
+                selectedTabIndex = pagerState.currentPage,
+                indicator = { tabPositions ->
+                    TabRowDefaults.SecondaryIndicator(
+                        Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage])
+                    )
+                }
+            ) {
                 tabs.forEachIndexed { index, title ->
                     val count = when (title) {
                         "Pending" -> pendingAssignments.size
@@ -69,14 +80,18 @@ fun AssignmentsScreen(
                     }
 
                     Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
+                        selected = pagerState.currentPage == index,
+                        onClick = {
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(index)
+                            }
+                        },
                         text = {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(title)
                                 if (count > 0) {
                                     Badge(
-                                        containerColor = if (selectedTab == index)
+                                        containerColor = if (pagerState.currentPage == index)
                                             MaterialTheme.colorScheme.primary
                                         else
                                             MaterialTheme.colorScheme.secondary
@@ -90,99 +105,29 @@ fun AssignmentsScreen(
                 }
             }
 
-            // Content
-            when {
-                isLoading -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            CircularProgressIndicator()
-                            Text("Loading assignments...")
-                        }
-                    }
+            // Swipeable Content
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                val currentAssignments = when (page) {
+                    0 -> pendingAssignments
+                    1 -> acceptedAssignments
+                    2 -> deployedAssignments
+                    else -> emptyList()
                 }
-                error != null -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Error,
-                                contentDescription = null,
-                                modifier = Modifier.size(64.dp),
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                            Text(
-                                text = error ?: "Error loading assignments",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                            Button(onClick = { viewModel.refresh() }) {
-                                Icon(Icons.Default.Refresh, null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Retry")
-                            }
-                        }
-                    }
-                }
-                else -> {
-                    val currentAssignments = when (tabs[selectedTab]) {
-                        "Pending" -> pendingAssignments
-                        "Accepted" -> acceptedAssignments
-                        "Deployed" -> deployedAssignments
-                        else -> emptyList()
-                    }
 
-                    if (currentAssignments.isEmpty()) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Assignment,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(64.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "No ${tabs[selectedTab].lowercase()} assignments",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            items(currentAssignments, key = { it.qrCodeId }) { assignment ->
-                                AssignmentDetailCard(
-                                    assignment = assignment,
-                                    onAccept = { viewModel.acceptAssignment(it) },
-                                    onReject = { viewModel.showRejectDialog(it) },
-                                    onCustomizeQR = onNavigateToQRCustomize,
-                                    onChat = onNavigateToChat
-                                )
-                            }
-                        }
-                    }
-                }
+                AssignmentTabContent(
+                    assignments = currentAssignments,
+                    tabName = tabs[page],
+                    isLoading = isLoading,
+                    error = error,
+                    onAccept = { viewModel.acceptAssignment(it) },
+                    onReject = { viewModel.showRejectDialog(it) },
+                    onCustomizeQR = onNavigateToQRCustomize,
+                    onChat = onNavigateToChat,
+                    onRetry = { viewModel.refresh() }
+                )
             }
         }
     }
@@ -196,12 +141,103 @@ fun AssignmentsScreen(
             }
         )
     }
+}
 
-    // Show error snackbar
-    LaunchedEffect(error) {
-        error?.let {
-            // You can add SnackbarHost here if needed
-            Log.e("AssignmentsScreen", "Error: $it")
+@Composable
+fun AssignmentTabContent(
+    assignments: List<QRAssignment>,
+    tabName: String,
+    isLoading: Boolean,
+    error: String?,
+    onAccept: (Long) -> Unit,
+    onReject: (Long) -> Unit,
+    onCustomizeQR: (Long) -> Unit,
+    onChat: (Long) -> Unit,
+    onRetry: () -> Unit
+) {
+    when {
+        isLoading -> {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator()
+                    Text("Loading assignments...")
+                }
+            }
+        }
+        error != null -> {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Error,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Button(onClick = onRetry) {
+                        Icon(Icons.Default.Refresh, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Retry")
+                    }
+                }
+            }
+        }
+        assignments.isEmpty() -> {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Assignment,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "No ${tabName.lowercase()} assignments",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        else -> {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(assignments, key = { it.qrCodeId }) { assignment ->
+                    AssignmentDetailCard(
+                        assignment = assignment,
+                        onAccept = onAccept,
+                        onReject = onReject,
+                        onCustomizeQR = onCustomizeQR,
+                        onChat = onChat
+                    )
+                }
+            }
         }
     }
 }
@@ -389,6 +425,7 @@ fun AssignmentStatusChip(status: String) {
         "REJECTED" -> MaterialTheme.colorScheme.error to "Rejected"
         else -> MaterialTheme.colorScheme.onSurfaceVariant to status
     }
+
 
     AssistChip(
         onClick = { },

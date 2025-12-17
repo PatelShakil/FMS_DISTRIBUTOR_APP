@@ -124,7 +124,8 @@ fun MainScreen(startDestination: String) {
             }
         }
     ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding)) {
+        Box(modifier = Modifier  .padding(innerPadding)
+            .consumeWindowInsets(innerPadding)) {
             NavGraph(
                 navController = navController,
                 startDestination = startDestination
